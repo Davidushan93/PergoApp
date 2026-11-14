@@ -75,7 +75,7 @@
            alt="U.S. Pergolettese 1932" class="h-10 w-auto drop-shadow shrink-0">
       <div class="min-w-0">
         <h1 class="text-xs sm:text-sm font-black tracking-wider uppercase text-pergo-yellow leading-tight truncate">U.S. PERGOLETTESE 1932</h1>
-        <p id="headerSubtitle" onclick="switchTab('rosa')" class="text-[10px] text-slate-300 font-medium truncate cursor-pointer hover:underline">Caricamento... (v18.1)</p>
+        <p id="headerSubtitle" onclick="switchTab('rosa')" class="text-[10px] text-slate-300 font-medium truncate cursor-pointer hover:underline">Caricamento... (v18.2)</p>
       </div>
     </div>
 
@@ -591,6 +591,16 @@
     </div>
   </div>
 
+  <div id="dialogBox" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden no-print">
+    <div class="bg-white border-2 border-pergo-blue w-full max-w-sm rounded-3xl p-5 shadow-2xl space-y-4">
+      <p id="dialogText" class="text-sm font-semibold text-slate-900 whitespace-pre-line leading-relaxed"></p>
+      <div class="flex justify-end gap-2">
+        <button type="button" id="dialogNo" class="px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-bold hidden"></button>
+        <button type="button" id="dialogSi" class="px-4 py-2 bg-pergo-blue text-pergo-yellow rounded-xl text-xs font-black"></button>
+      </div>
+    </div>
+  </div>
+
   <div id="toastBox" onclick="this.classList.add('hidden')" class="fixed bottom-24 inset-x-0 mx-auto w-72 bg-slate-900/95 text-white text-xs font-bold rounded-2xl px-4 py-3 shadow-2xl z-50 whitespace-pre-line leading-relaxed hidden no-print"></div>
 
   <div id="loadingOverlay" class="fixed inset-0 bg-pergo-blue/90 backdrop-blur-sm z-50 flex flex-col items-center justify-center gap-3 text-white hidden no-print">
@@ -620,7 +630,7 @@
         if (!report) report = 'Nessun errore di sintassi trovato, ma lo script principale non si \u00e8 avviato.';
         var box = document.createElement('pre');
         box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;max-height:60vh;overflow:auto;background:#7f1d1d;color:#fff;font-size:11px;padding:10px;white-space:pre-wrap;word-break:break-all;margin:0;';
-        box.textContent = 'AUTODIAGNOSI v18.1 - fai uno screenshot di questo riquadro' + NLc + NLc + report;
+        box.textContent = 'AUTODIAGNOSI v18.2 - fai uno screenshot di questo riquadro' + NLc + NLc + report;
         document.body.appendChild(box);
       }, 1500);
     });
@@ -686,14 +696,25 @@
           if (name === 'withSuccessHandler') return f => makeRunner(f, fail);
           if (name === 'withFailureHandler') return f => makeRunner(ok, f);
           return (...args) => {
-            // text/plain evita la richiesta preliminare CORS, che Apps Script non gestisce
-            fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ fn: name, args: args }) })
-              .then(r => r.json())
-              .then(res => {
-                if (res && res.ok) { if (ok) ok(res.result); }
-                else if (fail) fail(new Error((res && res.error) || 'Risposta non valida dal server'));
-              })
-              .catch(err => { if (fail) fail(err); });
+            // id della richiesta: se la rete cade prima della risposta l'app riprova da sola
+            // e il server, riconoscendo l'id, non ripete l'operazione (es. un salvataggio due volte)
+            const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+            const body = JSON.stringify({ fn: name, args: args, id: id });
+            const tentativo = n => {
+              // text/plain evita la richiesta preliminare CORS, che Apps Script non gestisce
+              fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body })
+                .then(r => r.json())
+                .then(
+                  res => {
+                    if (res && res.ok) { if (ok) ok(res.result); }
+                    else if (fail) fail(new Error((res && res.error) || 'Risposta non valida dal server'));
+                  },
+                  () => {
+                    if (n < 3) setTimeout(() => tentativo(n + 1), 1500 * n);
+                    else if (fail) fail(new Error('Connessione non riuscita'));
+                  });
+            };
+            tentativo(1);
           };
         }
       });
@@ -855,14 +876,14 @@
       const descr = ((p.isMatch || p.matches) ? 'Gara' + (p.matches && p.matches[0] ? ' vs ' + p.matches[0].opponent : (p.match && p.match.opponent ? ' vs ' + p.match.opponent : '')) : 'Allenamento') + ' del ' + p.date + ' (' + (p.categoria || '') + ')';
 
       google.script.run
-        .withSuccessHandler(res => {
+        .withSuccessHandler(async res => {
           isSyncing = false;
           if (res && res.success) {
             const rest = dropFirstFromQueue();
             if (rest.length > 0) syncOfflineQueue();
-            else { alert('Sincronizzazione completata.'); loadServerData(); }
+            else { notifica('Dati sincronizzati.'); loadServerData(); }
           } else if (res && res.duplicate) {
-            if (confirm(descr + ' \u00e8 gi\u00e0 presente sul foglio.' + NL + NL + 'OK = sovrascrivi con i dati salvati sul telefono' + NL + 'Annulla = scarta i dati del telefono')) {
+            if (await chiedi(descr + ' \u00e8 gi\u00e0 sul foglio. Sostituirlo con i dati del telefono?', 'Sostituisci', 'Scarta')) {
               const qq = getOfflineQueue();
               qq[0].payload.overwrite = true;
               localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(qq));
@@ -872,7 +893,7 @@
             syncOfflineQueue();
           } else {
             const msg = (res && res.message) ? res.message : 'Errore sconosciuto';
-            if (confirm('Impossibile sincronizzare: ' + descr + NL + msg + NL + NL + 'OK = elimina dalla coda' + NL + 'Annulla = riprova pi\u00f9 tardi')) {
+            if (await chiedi('Sincronizzazione non riuscita (' + descr + '): ' + msg, 'Scarta', 'Riprova dopo')) {
               dropFirstFromQueue();
               syncOfflineQueue();
             }
@@ -948,7 +969,7 @@
           if (!data || data.success === false) {
             const errMessaggio = (data ? data.error : "Nessuna risposta dal server");
             showError("Errore dal foglio: " + errMessaggio);
-            if (!shownFromCache) alert("Attenzione: " + errMessaggio);
+            if (!shownFromCache) avviso(errMessaggio);
             return;
           }
 
@@ -971,7 +992,7 @@
             safeSetText('headerSubtitle', appData.players.length + ' tesserati (dati non aggiornati)');
           } else {
             showError("Errore connessione: " + err.message);
-            alert("Errore di connessione a Google Sheets: " + err.message);
+            avviso('Connessione non riuscita. Riprova.');
           }
         })
         .getInitialData(cat, !!force);
@@ -1044,7 +1065,7 @@
     function setEventType(type) {
       // In modifica non si pu\u00f2 cambiare tipo: il numero di riga appartiene all'altra scheda
       if (editingState.isEditing && type !== editingState.eventType) {
-        alert('Stai modificando ' + (editingState.eventType === 'partita' ? 'una partita' : 'un allenamento') + '. Premi "Annulla" in alto per uscire dalla modifica.');
+        avviso('Stai modificando un evento: premi Annulla per uscire.');
         return;
       }
       sessionState.eventType = type;
@@ -1096,9 +1117,9 @@
       renderPlayersList();
     }
 
-    function removeMatchRow(k) {
+    async function removeMatchRow(k) {
       const m = sessionState.matches[k];
-      if (m && (m.opponent || m.result) && !confirm('Togliere la partita contro "' + (m.opponent || '...') + '"? I minuti di questa partita verranno persi.')) return;
+      if (m && (m.opponent || m.result) && !(await chiedi('Togliere la partita contro ' + (m.opponent || '...') + '?', 'Togli', 'Annulla'))) return;
       sessionDirty = true;
       sessionState.matches.splice(k, 1);
       Object.values(sessionState.presences).forEach(st => { if (Array.isArray(st.minutes)) st.minutes.splice(k, 1); });
@@ -1317,7 +1338,7 @@
       if (!eventItem) return;
 
       if (!/^\d{4}-\d{2}-\d{2}$/.test(eventItem.dateKey || '')) {
-        alert('La data di questo evento nel foglio ("' + eventItem.date + '") non \u00e8 leggibile. Correggila direttamente nel foglio Google e ricarica.');
+        avviso('Data non leggibile nel foglio: correggila nel foglio.');
         return;
       }
 
@@ -1386,11 +1407,11 @@
     function submitAttendance(isOverwrite) {
       closeOverwriteModal();
       const dateVal = document.getElementById('sessionDate').value;
-      if (!dateVal) { alert('Inserisci la data.'); return; }
+      if (!dateVal) { avviso('Inserisci la data.'); return; }
 
       const isPartita = sessionState.eventType === 'partita';
       if (isPartita && sessionState.matches.some(m => !String(m.opponent || '').trim())) {
-        alert("Inserisci l'avversario di ogni partita: senza avversario la gara non comparirebbe nello storico.");
+        avviso("Inserisci l'avversario di ogni partita.");
         return;
       }
 
@@ -1438,7 +1459,7 @@
 
       if (!navigator.onLine) {
         saveToOfflineQueue(payload);
-        alert("Nessuna connessione internet. Modifiche salvate in memoria locale!");
+        avviso('Nessuna connessione: salvato sul telefono, verr\u00e0 inviato appena torna la rete.');
         cancelEditMode();
         return;
       }
@@ -1455,23 +1476,23 @@
             const modal = document.getElementById('overwriteModal');
             if (modal) modal.classList.remove('hidden');
           } else if (res.success) {
-            alert(res.message);
+            notifica(res.message);
             cancelEditMode();
             loadServerData();
           } else {
-            alert('Attenzione: ' + res.message);
+            avviso(res.message);
           }
         })
         .withFailureHandler(err => {
           hideLoading();
           saveToOfflineQueue(payload);
-          alert("Connessione instabile (" + (err && err.message ? err.message : 'errore') + ")." + NL + "I dati sono stati salvati sul dispositivo: premi \"Sincronizza\" nel banner arancione appena la rete \u00e8 stabile.");
+          avviso('Connessione assente: salvato sul telefono, verr\u00e0 inviato appena possibile.');
           cancelEditMode();
         })[fn](payload);
     }
 
     // Elimina un allenamento o un'intera giornata di gara (tutte le partite di quella data)
-    function eliminaEvento(type, rowIndex) {
+    async function eliminaEvento(type, rowIndex) {
       const isPartita = type === 'partita';
       const item = (isPartita ? appData.matches : appData.trainings).find(x => x.rowIndex === rowIndex);
       if (!item) return;
@@ -1479,24 +1500,25 @@
       const descr = isPartita
         ? (giornata.length > 1 ? 'la giornata del ' + item.date + ' (' + giornata.length + ' partite: ' + giornata.map(m => m.opponent).join(', ') + ')' : 'la partita contro ' + item.opponent + ' del ' + item.date)
         : "l'allenamento del " + item.date;
-      if (!confirm('Eliminare definitivamente ' + descr + '?' + NL + NL + 'Le righe verranno cancellate dal foglio Google. Si potranno recuperare solo dai backup notturni.')) return;
-      if (!navigator.onLine) { alert("Per eliminare serve la connessione internet."); return; }
+      if (!(await chiedi('Eliminare ' + descr + '?', 'Elimina', 'Annulla'))) return;
+      if (!navigator.onLine) { avviso('Serve la connessione internet.'); return; }
 
       showLoading('Eliminazione...');
       google.script.run
         .withSuccessHandler(res => {
           hideLoading();
           if (res && res.success) {
-            alert(res.message);
+            notifica(res.message);
             if (editingState.isEditing) cancelEditMode();
             loadServerData(currentActiveCategory, true);
           } else {
-            alert('Attenzione: ' + (res ? res.message : 'nessuna risposta'));
+            avviso(res ? res.message : 'Nessuna risposta dal server.');
           }
         })
         .withFailureHandler(err => {
           hideLoading();
-          alert("Eliminazione non riuscita: " + (err && err.message ? err.message : 'controlla la connessione'));
+          avviso('Eliminazione non riuscita. Controlla la connessione.');
+          loadServerData(currentActiveCategory, true);
         })
         .eliminaEvento({
           categoria: currentActiveCategory,
@@ -1596,6 +1618,33 @@
       righe.push(stato);
       showToast((p.displayName || p.name) + NL + righe.join(NL));
     }
+
+    // ---------- messaggi dentro l'app (niente finestre del browser con l'indirizzo del sito) ----------
+    // notifica: breve, sparisce da sola. avviso: resta finche' non si preme OK.
+    // chiedi: domanda con due tasti, restituisce una Promise (true = si).
+    function notifica(msg) { showToast(msg); }
+
+    let dialogQueue = Promise.resolve();
+    function apriDialogo(msg, si, no) {
+      const run = () => new Promise(resolve => {
+        const box = document.getElementById('dialogBox');
+        const bSi = document.getElementById('dialogSi');
+        const bNo = document.getElementById('dialogNo');
+        document.getElementById('dialogText').innerText = msg;
+        bSi.innerText = si;
+        bNo.innerText = no || '';
+        bNo.classList.toggle('hidden', !no);
+        const chiudi = val => { box.classList.add('hidden'); bSi.onclick = null; bNo.onclick = null; resolve(val); };
+        bSi.onclick = () => chiudi(true);
+        bNo.onclick = () => chiudi(false);
+        box.classList.remove('hidden');
+      });
+      dialogQueue = dialogQueue.then(run, run);
+      return dialogQueue;
+    }
+    function avviso(msg) { return apriDialogo(msg, 'OK'); }
+    function chiedi(msg, si, no) { return apriDialogo(msg, si || 'OK', no || 'Annulla'); }
+    window.alert = msg => { avviso(String(msg)); };
 
     let toastTimer = null;
     function showToast(text) {
@@ -1734,37 +1783,36 @@
     function salvaConvocati(payload, dopo, silenzioso) {
       showLoading("Salvataggio convocazioni...");
       google.script.run
-        .withSuccessHandler(res => {
+        .withSuccessHandler(async res => {
           hideLoading();
           if (res.success) {
-            if (!silenzioso) alert(res.message + NL + "A fine gara potrai aggiungere risultato e minutaggi da Storico > Modifica.");
-            else if (res.unmatched && res.unmatched.length) alert("ATTENZIONE, non trovati nel foglio: " + res.unmatched.join(', '));
+            if (!silenzioso) notifica(res.message);
+            else if (res.unmatched && res.unmatched.length) avviso('Non trovati nel foglio: ' + res.unmatched.join(', '));
             loadServerData();
             if (dopo) dopo(true);
           } else if (res.duplicate) {
-            if (confirm("Nel foglio c'\u00e8 gi\u00e0 la gara del " + res.formattedDate + "." + NL +
-                "Aggiorno i convocati? (risultato e minuti gi\u00e0 inseriti restano)")) {
+            if (await chiedi('Gara del ' + res.formattedDate + ' gi\u00e0 nel foglio. Aggiornare i convocati?', 'Aggiorna', 'No')) {
               payload.overwrite = true;
               salvaConvocati(payload, dopo, silenzioso);
             } else if (dopo) {
               dopo(false);
             }
           } else {
-            alert("Attenzione: " + res.message);
+            avviso(res.message);
             if (dopo) dopo(false);
           }
         })
         .withFailureHandler(err => {
           hideLoading();
           saveToOfflineQueue(payload);
-          alert("Convocazioni salvate sul dispositivo: verranno caricate sul foglio appena torna la rete.");
+          avviso('Connessione assente: convocati salvati sul telefono.');
           if (dopo) dopo(false);
         })
         .salvaConvocazioni(payload);
     }
 
     function submitConvocazioniToSheet() {
-      if (!document.getElementById('convDateInput').value) { alert("Inserisci una data valida!"); return; }
+      if (!document.getElementById('convDateInput').value) { avviso('Inserisci la data.'); return; }
       salvaConvocati(buildConvocatiPayload(), null, false);
     }
 
@@ -1820,7 +1868,7 @@
     }
 
     function creaConvocazione(formato) {
-      if (!document.getElementById('convDateInput').value) { alert("Inserisci la data della gara."); return; }
+      if (!document.getElementById('convDateInput').value) { avviso('Inserisci la data.'); return; }
       // creando il documento (PDF) aggiorno anche il foglio, come con "Conferma"
       if (formato === 'pdf') {
         salvaConvocati(buildConvocatiPayload(), () => generaDocumento(formato), true);
@@ -1836,7 +1884,7 @@
       google.script.run
         .withSuccessHandler(res => {
           hideLoading();
-          if (!res || !res.success) { alert('Attenzione: ' + (res ? res.message : 'nessuna risposta')); return; }
+          if (!res || !res.success) { avviso(res ? res.message : 'Nessuna risposta dal server.'); return; }
           const url = base64ToBlobUrl(res.base64, res.mime);
           if (res.formato === 'pdf') {
             // nuovo PDF: la versione Word va rifatta
@@ -1859,7 +1907,7 @@
         })
         .withFailureHandler(err => {
           hideLoading();
-          alert('Impossibile creare il documento: ' + (err && err.message ? err.message : 'controlla la connessione'));
+          avviso('Documento non creato. Controlla la connessione.');
         })
         .generaConvocazione(payload);
     }
@@ -1901,7 +1949,7 @@
         }
         // indirizzo scritto a mano ma non ancora cercato: lo cerco subito
         if (search && search.value) searchAddressOnMap();
-      }, 200)).catch(() => alert("Mappa non disponibile: controlla la connessione."));
+      }, 200)).catch(() => avviso('Mappa non disponibile senza connessione.'));
     }
 
     function closeLocationMapModal() {
@@ -1941,14 +1989,14 @@
             loc.address = first.display_name.split(',').slice(0, 3).join(',');
             safeSetText('mapSelectedAddressLabel', loc.address);
           } else {
-            alert("Indirizzo non trovato.");
+            avviso('Indirizzo non trovato.');
           }
-        }).catch(() => alert("Errore ricerca indirizzo."));
+        }).catch(() => avviso('Ricerca non riuscita.'));
     }
 
     function confirmLocationFromMap() {
       const loc = luogoMappa();
-      if (!loc.address) { alert("Tocca la mappa o cerca un indirizzo."); return; }
+      if (!loc.address) { avviso('Tocca la mappa o cerca un indirizzo.'); return; }
       loc.fromMap = true;
       document.getElementById(MAP_INPUT[mapTarget]).value = loc.address;
       closeLocationMapModal();
@@ -2189,7 +2237,7 @@
     // ==================== STAMPA SCHEDA ATLETA A4 ====================
     async function launchPrintReport() {
       if (selectedPlayerNamesForPdf.size === 0) {
-        alert("Seleziona almeno un giocatore per la stampa delle schede!");
+        avviso('Seleziona almeno un giocatore.');
         return;
       }
 
@@ -2212,7 +2260,7 @@
 
       } catch(e) {
         hideLoading();
-        alert("Errore preparazione stampa: " + e.message);
+        avviso('Stampa non riuscita.');
       }
     }
 
@@ -2671,12 +2719,12 @@ function renderDrilldownEvents() {
       });
     }
 
-    function handleAddNewPlayer() {
+    async function handleAddNewPlayer() {
       const input = document.getElementById('newPlayerName');
       const birthInput = document.getElementById('newPlayerBirth');
       const baseName = (input ? input.value : '').trim().replace(/\s+/g, ' ').toUpperCase();
-      if (!baseName) { alert('Scrivi cognome e nome del giocatore.'); return; }
-      if (/\d/.test(baseName)) { alert('Il nome non deve contenere numeri: la data di nascita va nel campo apposito.'); return; }
+      if (!baseName) { avviso('Scrivi cognome e nome.'); return; }
+      if (/\d/.test(baseName)) { avviso('Il nome non deve contenere numeri.'); return; }
 
       // Stesso formato delle intestazioni del foglio: "COGNOME NOME gg/mm/aaaa"
       let name = baseName;
@@ -2686,7 +2734,7 @@ function renderDrilldownEvents() {
         name += ' ' + b[2] + '/' + b[1] + '/' + b[0];
       }
 
-      if (!confirm('Aggiungere ' + name + ' alla rosa ' + currentActiveCategory + '?' + NL + 'Verr\u00e0 creata una colonna nelle schede Allenamenti e Partite.')) return;
+      if (!(await chiedi('Aggiungere ' + name + ' alla rosa ' + currentActiveCategory + '?', 'Aggiungi', 'Annulla'))) return;
 
       showLoading('Aggiunta ' + baseName + '...');
       google.script.run
@@ -2695,15 +2743,15 @@ function renderDrilldownEvents() {
           if (res.success) {
             if (input) input.value = '';
             if (birthInput) birthInput.value = '';
-            alert(baseName + ' aggiunto alla rosa ' + currentActiveCategory + '.');
+            notifica(baseName + ' aggiunto.');
             loadServerData();
           } else {
-            alert(res.message);
+            avviso(res.message);
           }
         })
         .withFailureHandler(err => {
           hideLoading();
-          alert('Errore: ' + err.message);
+          avviso('Operazione non riuscita. Controlla la connessione.');
         })
         .addPlayer({ name: name, categoria: currentActiveCategory });
     }
@@ -2715,21 +2763,22 @@ function renderDrilldownEvents() {
       handleRemovePlayer(p.name);
     }
 
-    function handleRemovePlayer(name) {
-      if (!confirm('Vuoi togliere ' + name + ' dalla rosa?' + NL + 'La colonna verr\u00e0 nascosta e marcata "[EX]" nel foglio: lo storico presenze resta conservato.')) return;
+    async function handleRemovePlayer(name) {
+      if (!(await chiedi('Togliere ' + name + ' dalla rosa? Lo storico resta nel foglio.', 'Togli', 'Annulla'))) return;
       showLoading('Rimozione ' + name + '...');
       google.script.run
         .withSuccessHandler(res => {
           hideLoading();
           if (res.success) {
+            notifica(name + ' tolto dalla rosa.');
             loadServerData();
           } else {
-            alert(res.message);
+            avviso(res.message);
           }
         })
         .withFailureHandler(err => {
           hideLoading();
-          alert('Errore: ' + err.message);
+          avviso('Operazione non riuscita. Controlla la connessione.');
         })
         .removePlayer({ name: name, categoria: currentActiveCategory });
     }
