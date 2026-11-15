@@ -303,7 +303,7 @@
           <div id="sezione-cibo" class="space-y-2 hidden">
             <div class="border border-slate-200 rounded-xl p-2 space-y-1.5">
               <span class="text-[10px] font-black text-slate-500 uppercase block">Primo pasto</span>
-              <input type="text" id="food1Titolo" placeholder="Titolo e orario (es. PRANZO ORE 12.30 - 12.45)" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1 text-[11px] uppercase">
+              <input type="text" id="food1Titolo" onchange="provaCodiceAI(this)" onkeydown="if (event.key === 'Enter') this.blur()" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Titolo e orario (es. PRANZO ORE 12.30 - 12.45)" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1 text-[11px] uppercase">
               <input type="text" id="food1Opz1" placeholder="Opzione 1" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1 text-[11px]">
               <input type="text" id="food1Opz2" placeholder="Opzione 2 (facoltativa)" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1 text-[11px]">
             </div>
@@ -1750,6 +1750,57 @@
         if (el) el.value = '';
       });
       saveFoodChoice();
+    }
+
+    // Consigli alimentari con AI. Si attivano scrivendo un codice nel titolo del primo pasto:
+    // il codice lo conosce solo il server, qui non e' scritto. Se e' sbagliato non succede nulla.
+    const PAROLE_TITOLO = ['colazione', 'pranzo', 'cena', 'merenda', 'spuntino', 'rinforzo', 'sacca', 'pregara', 'postgara'];
+    let aiInCorso = false;
+
+    function provaCodiceAI(el) {
+      const scritto = (el.value || '').trim();
+      const v = scritto.toLowerCase();
+      if (aiInCorso || !/^[a-z0-9]{3,30}$/.test(v) || PAROLE_TITOLO.indexOf(v) >= 0) return;
+      let evita = [];
+      try { evita = JSON.parse(localStorage.getItem('pergo_ai_storia') || '[]'); } catch (e) {}
+      const val = id => (document.getElementById(id).value || '').trim();
+      aiInCorso = true;
+      el.value = '';
+      el.disabled = true;
+      const ph = el.placeholder;
+      el.placeholder = '...';
+      const fine = () => { aiInCorso = false; el.disabled = false; el.placeholder = ph; };
+      google.script.run
+        .withSuccessHandler(res => {
+          fine();
+          if (!res || !res.ok) { el.value = scritto; return; }
+          Object.keys(res.campi).forEach(id => {
+            const campo = document.getElementById(id);
+            if (campo) campo.value = res.campi[id];
+          });
+          setSezione('cibo');
+          try {
+            const c = res.campi;
+            const nuovi = [c.food1Opz1, c.food1Opz2, c.food2Testo, c.food3Opz1, c.food3Opz2]
+              .filter(Boolean).map(t => t.replace(/^[^:]{0,20}:\s*/, ''));
+            localStorage.setItem('pergo_ai_storia', JSON.stringify(evita.concat(nuovi).slice(-15)));
+          } catch (e) {}
+          notifica(res.messaggio);
+        })
+        .withFailureHandler(() => { fine(); el.value = scritto; })
+        .suggerisciPasti({
+          codice: v,
+          categoria: currentActiveCategory,
+          date: val('convDateInput'),
+          tipo: val('convTypeSelect'),
+          avversario: val('convOpponentInput'),
+          ritrovo: val('convRitrovoTimeInput'),
+          inizio: val('convMatchTimeInput'),
+          fine: val('convEndTimeInput'),
+          luogo: val('convLocationInput'),
+          luogoGara: val('convGaraInput'),
+          evita: evita
+        });
     }
 
     function saveLastDressChoice() {
