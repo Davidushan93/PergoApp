@@ -75,7 +75,7 @@
            alt="U.S. Pergolettese 1932" class="h-10 w-auto drop-shadow shrink-0">
       <div class="min-w-0">
         <h1 class="text-xs sm:text-sm font-black tracking-wider uppercase text-pergo-yellow leading-tight truncate">U.S. PERGOLETTESE 1932</h1>
-        <p id="headerSubtitle" onclick="switchTab('rosa')" class="text-[10px] text-slate-300 font-medium truncate cursor-pointer hover:underline">Caricamento... (v18.2)</p>
+        <p id="headerSubtitle" onclick="switchTab('rosa')" class="text-[10px] text-slate-300 font-medium truncate cursor-pointer hover:underline">Caricamento... (v18.4)</p>
       </div>
     </div>
 
@@ -267,7 +267,7 @@
         <div>
           <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Luogo Ritrovo</label>
           <div class="flex gap-2">
-            <input type="text" id="convLocationInput" value="Via Padre Cremonesi, Ripalta Guerina" class="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-pergo-blue">
+            <input type="text" id="convLocationInput" value="Ripalta Guerina, Via Padre Cremonesi" placeholder="Citt&#xE0;, via e centro sportivo" class="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-pergo-blue">
             <button type="button" onclick="openLocationMapModal('ritrovo')" class="bg-slate-200 hover:bg-slate-300 text-slate-800 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0" title="Apri Mappa">
               <i class="fa-solid fa-map-location-dot"></i> Mappa
             </button>
@@ -277,7 +277,7 @@
         <div>
           <label class="text-[10px] font-bold text-slate-500 uppercase block mb-1">Luogo Gara <span class="normal-case font-semibold text-slate-400">(facoltativo, se diverso dal ritrovo)</span></label>
           <div class="flex gap-2">
-            <input type="text" id="convGaraInput" placeholder="es. Via dello Sport 1, Crema" class="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-pergo-blue">
+            <input type="text" id="convGaraInput" placeholder="es. Crema, Via dello Sport 1" class="flex-1 bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:border-pergo-blue">
             <button type="button" onclick="openLocationMapModal('gara')" class="bg-slate-200 hover:bg-slate-300 text-slate-800 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1 shrink-0" title="Apri Mappa">
               <i class="fa-solid fa-map-location-dot"></i> Mappa
             </button>
@@ -630,7 +630,7 @@
         if (!report) report = 'Nessun errore di sintassi trovato, ma lo script principale non si \u00e8 avviato.';
         var box = document.createElement('pre');
         box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:99999;max-height:60vh;overflow:auto;background:#7f1d1d;color:#fff;font-size:11px;padding:10px;white-space:pre-wrap;word-break:break-all;margin:0;';
-        box.textContent = 'AUTODIAGNOSI v18.2 - fai uno screenshot di questo riquadro' + NLc + NLc + report;
+        box.textContent = 'AUTODIAGNOSI v18.4 - fai uno screenshot di questo riquadro' + NLc + NLc + report;
         document.body.appendChild(box);
       }, 1500);
     });
@@ -2007,17 +2007,33 @@
       document.getElementById('locationMapModal').classList.add('hidden');
     }
 
+    // Indirizzo per il documento: "Citta, Via Roma 1 - Centro Sportivo X".
+    // Nel documento la citta va sulla prima riga, il resto sulla seconda.
+    function formatIndirizzo(d) {
+      if (!d) return '';
+      const a = d.address || {};
+      const citta = a.city || a.town || a.village || a.municipality || a.hamlet || a.suburb || '';
+      const strada = a.road || a.pedestrian || a.square || a.footway || a.path || a.residential || '';
+      const via = strada ? strada + (a.house_number ? ' ' + a.house_number : '') : '';
+      const nomi = [d.name, a.leisure, a.amenity, a.club, a.building, a.sport];
+      const centro = nomi.find(n => n && n !== strada && n !== citta && !/^\d+$/.test(n) && n !== (a.house_number || '')) || '';
+      const seconda = [via, centro].filter(Boolean).join(' - ');
+      if (!citta && !seconda) return String(d.display_name || '').split(',').slice(0, 3).join(',').trim();
+      return [citta, seconda].filter(Boolean).join(', ');
+    }
+
     function updateMarkerLocation(lat, lng) {
       const loc = luogoMappa();
       loc.lat = lat;
       loc.lng = lng;
       if (mapMarkerInstance) mapMarkerInstance.setLatLng([lat, lng]);
 
-      fetch(HTTPS + 'nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lng)
+      fetch(HTTPS + 'nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=18&lat=' + lat + '&lon=' + lng)
         .then(r => r.json())
         .then(data => {
-          if (data && data.display_name) {
-            loc.address = data.display_name.split(',').slice(0, 3).join(',');
+          const testo = formatIndirizzo(data);
+          if (testo) {
+            loc.address = testo;
             safeSetText('mapSelectedAddressLabel', loc.address);
           }
         }).catch(() => {});
@@ -2028,7 +2044,7 @@
       if (!q) return;
       const loc = luogoMappa();
 
-      fetch(HTTPS + 'nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(q))
+      fetch(HTTPS + 'nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&q=' + encodeURIComponent(q))
         .then(r => r.json())
         .then(data => {
           if (data && data.length > 0) {
@@ -2036,8 +2052,10 @@
             const lat = parseFloat(first.lat);
             const lng = parseFloat(first.lon);
             if (leafletMapInstance) leafletMapInstance.setView([lat, lng], 16);
-            updateMarkerLocation(lat, lng);
-            loc.address = first.display_name.split(',').slice(0, 3).join(',');
+            loc.lat = lat;
+            loc.lng = lng;
+            if (mapMarkerInstance) mapMarkerInstance.setLatLng([lat, lng]);
+            loc.address = formatIndirizzo(first);
             safeSetText('mapSelectedAddressLabel', loc.address);
           } else {
             avviso('Indirizzo non trovato.');
